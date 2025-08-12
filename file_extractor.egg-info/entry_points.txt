@@ -1,0 +1,5 @@
+[console_scripts]
+file-extractor = file_extractor:main
+
+[gui_scripts]
+file-extractor-gui = file_extractor:main

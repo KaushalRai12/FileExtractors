@@ -4,12 +4,14 @@ import os
 import shutil
 from pathlib import Path
 import threading
+import json
+from version import __version__
 
 class FileExtractorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("File Extractor - Multiple File Types")
-        self.root.geometry("800x600")
+        self.root.title(f"File Extractor - Custom File Types v{__version__}")
+        self.root.geometry("900x700")
         self.root.configure(bg='#f0f0f0')
         
         # Variables
@@ -18,6 +20,28 @@ class FileExtractorApp:
         self.convert_to_txt = tk.BooleanVar()
         self.found_files = []
         self.extraction_running = False
+        
+        # File type configuration
+        self.file_types = {
+            'Python': ['.py', '.pyw', '.pyx', '.pxd'],
+            'Environment': ['.env', '.env.local', '.env.production', '.env.development'],
+            'YAML': ['.yml', '.yaml'],
+            'JSON': ['.json', '.jsonc'],
+            'TypeScript': ['.ts', '.tsx'],
+            'JavaScript': ['.js', '.jsx', '.mjs'],
+            'HTML/CSS': ['.html', '.htm', '.css', '.scss', '.sass'],
+            'Markdown': ['.md', '.markdown'],
+            'Docker': ['Dockerfile', '.dockerignore'],
+            'Shell': ['.sh', '.bash', '.zsh', '.fish'],
+            'Config': ['.ini', '.cfg', '.conf', '.config'],
+            'XML': ['.xml', '.xsd', '.xsl'],
+            'SQL': ['.sql', '.db', '.sqlite'],
+            'Logs': ['.log', '.txt'],
+            'Custom': []
+        }
+        
+        # Load saved configuration
+        self.load_config()
         
         self.setup_ui()
         
@@ -32,7 +56,7 @@ class FileExtractorApp:
         main_frame.columnconfigure(1, weight=1)
         
         # Title
-        title_label = ttk.Label(main_frame, text="File Extractor", 
+        title_label = ttk.Label(main_frame, text="File Extractor - Custom File Types", 
                                font=('Arial', 24, 'bold'))
         title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
         
@@ -68,9 +92,50 @@ class FileExtractorApp:
                                      command=self.browse_destination, style='Accent.TButton')
         dest_browse_btn.grid(row=0, column=1)
         
+        # File Type Selection Frame
+        file_types_frame = ttk.LabelFrame(main_frame, text="Select File Types to Extract", padding="10")
+        file_types_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        file_types_frame.columnconfigure(0, weight=1)
+        
+        # Create checkboxes for file types
+        self.file_type_vars = {}
+        row = 0
+        col = 0
+        max_cols = 3
+        
+        for file_type, extensions in self.file_types.items():
+            if file_type == 'Custom':
+                continue
+                
+            var = tk.BooleanVar(value=True)  # Default to checked
+            self.file_type_vars[file_type] = var
+            
+            cb = ttk.Checkbutton(file_types_frame, 
+                                text=f"{file_type} ({', '.join(extensions)})", 
+                                variable=var)
+            cb.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+            
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+        
+        # Custom file types input
+        custom_frame = ttk.Frame(file_types_frame)
+        custom_frame.grid(row=row+1, column=0, columnspan=max_cols, sticky=(tk.W, tk.E), pady=10)
+        custom_frame.columnconfigure(0, weight=1)
+        
+        ttk.Label(custom_frame, text="Custom Extensions (comma-separated):", 
+                 font=('Arial', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=5)
+        
+        self.custom_extensions = tk.StringVar(value=".csv,.xml,.sql,.conf")
+        custom_entry = ttk.Entry(custom_frame, textvariable=self.custom_extensions, 
+                                font=('Arial', 10))
+        custom_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=(0, 10))
+        
         # Convert to TXT checkbox
         convert_frame = ttk.Frame(main_frame)
-        convert_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        convert_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         self.convert_checkbox = ttk.Checkbutton(convert_frame, 
                                                text="Convert all files to .txt format", 
@@ -81,30 +146,32 @@ class FileExtractorApp:
         # Scan button
         scan_btn = ttk.Button(main_frame, text="Scan for Files", 
                              command=self.scan_files, style='Accent.TButton')
-        scan_btn.grid(row=4, column=0, columnspan=3, pady=20)
+        scan_btn.grid(row=5, column=0, columnspan=3, pady=20)
         
         # Progress bar
         self.progress = ttk.Progressbar(main_frame, mode='indeterminate')
-        self.progress.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        self.progress.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         # Results frame
         results_frame = ttk.LabelFrame(main_frame, text="Found Files", padding="10")
-        results_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        results_frame.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         results_frame.columnconfigure(0, weight=1)
         results_frame.rowconfigure(0, weight=1)
         
         # Treeview for files
-        columns = ('File Name', 'Path', 'Size')
+        columns = ('File Name', 'Path', 'Size', 'Type')
         self.tree = ttk.Treeview(results_frame, columns=columns, show='headings', height=10)
         
         # Configure columns
         self.tree.heading('File Name', text='File Name')
         self.tree.heading('Path', text='Relative Path')
         self.tree.heading('Size', text='Size (KB)')
+        self.tree.heading('Type', text='File Type')
         
         self.tree.column('File Name', width=200)
-        self.tree.column('Path', width=400)
-        self.tree.column('Size', width=100)
+        self.tree.column('Path', width=300)
+        self.tree.column('Size', width=80)
+        self.tree.column('Type', width=100)
         
         # Scrollbar for treeview
         tree_scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -116,25 +183,88 @@ class FileExtractorApp:
         # Status label
         self.status_label = ttk.Label(main_frame, text="Ready to scan", 
                                      font=('Arial', 10))
-        self.status_label.grid(row=7, column=0, columnspan=3, pady=10)
+        self.status_label.grid(row=8, column=0, columnspan=3, pady=10)
         
         # Extract button
         self.extract_btn = ttk.Button(main_frame, text="Extract Files", 
                                      command=self.extract_files, style='Accent.TButton', state='disabled')
-        self.extract_btn.grid(row=8, column=0, columnspan=3, pady=10)
+        self.extract_btn.grid(row=9, column=0, columnspan=3, pady=10)
         
         # Configure grid weights for main frame
-        main_frame.rowconfigure(6, weight=1)
+        main_frame.rowconfigure(7, weight=1)
         
+    def get_selected_extensions(self):
+        """Get all selected file extensions based on checkboxes and custom input"""
+        extensions = set()
+        
+        # Add extensions from checked file types
+        for file_type, var in self.file_type_vars.items():
+            if var.get():
+                extensions.update(self.file_types[file_type])
+        
+        # Add custom extensions
+        custom_text = self.custom_extensions.get().strip()
+        if custom_text:
+            custom_exts = [ext.strip() for ext in custom_text.split(',') if ext.strip()]
+            extensions.update(custom_exts)
+        
+        return extensions
+        
+    def load_config(self):
+        """Load saved configuration from file"""
+        config_file = Path.home() / '.file_extractor_config.json'
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    
+                # Load saved paths
+                if 'source_path' in config:
+                    self.source_path.set(config['source_path'])
+                if 'destination_path' in config:
+                    self.destination_path.set(config['destination_path'])
+                    
+                # Load saved file type selections
+                if 'file_type_selections' in config:
+                    for file_type, selected in config['file_type_selections'].items():
+                        if file_type in self.file_type_vars:
+                            self.file_type_vars[file_type].set(selected)
+                            
+                # Load custom extensions
+                if 'custom_extensions' in config:
+                    self.custom_extensions.set(config['custom_extensions'])
+                    
+            except Exception as e:
+                print(f"Warning: Could not load configuration: {e}")
+                
+    def save_config(self):
+        """Save current configuration to file"""
+        config_file = Path.home() / '.file_extractor_config.json'
+        try:
+            config = {
+                'source_path': self.source_path.get(),
+                'destination_path': self.destination_path.get(),
+                'file_type_selections': {ft: var.get() for ft, var in self.file_type_vars.items()},
+                'custom_extensions': self.custom_extensions.get()
+            }
+            
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+                
+        except Exception as e:
+            print(f"Warning: Could not save configuration: {e}")
+            
     def browse_source(self):
         directory = filedialog.askdirectory(title="Select Source Directory")
         if directory:
             self.source_path.set(directory)
+            self.save_config()
             
     def browse_destination(self):
         directory = filedialog.askdirectory(title="Select Destination Directory")
         if directory:
             self.destination_path.set(directory)
+            self.save_config()
             
     def scan_files(self):
         source = self.source_path.get().strip()
@@ -146,6 +276,12 @@ class FileExtractorApp:
             messagebox.showerror("Error", "Source directory does not exist")
             return
             
+        # Get selected extensions
+        target_extensions = self.get_selected_extensions()
+        if not target_extensions:
+            messagebox.showerror("Error", "Please select at least one file type to extract")
+            return
+            
         # Clear previous results
         self.tree.delete(*self.tree.get_children())
         self.found_files = []
@@ -153,29 +289,46 @@ class FileExtractorApp:
         # Start scanning in a separate thread
         self.extraction_running = True
         self.progress.start()
-        self.status_label.config(text="Scanning for multiple file types...")
+        self.status_label.config(text=f"Scanning for {len(target_extensions)} file types...")
         self.extract_btn.config(state='disabled')
         
-        scan_thread = threading.Thread(target=self._scan_files_thread, args=(source,))
+        scan_thread = threading.Thread(target=self._scan_files_thread, args=(source, target_extensions))
         scan_thread.daemon = True
         scan_thread.start()
         
-    def _scan_files_thread(self, source):
+    def _scan_files_thread(self, source, target_extensions):
         try:
             source_path = Path(source)
-            target_extensions = {'.py', '.env', '.yml', '.yaml', '.json', '.tsx', '.ts', 'Dockerfile'}
             
             for file_path in source_path.rglob('*'):
-                # Skip node_modules folders
-                if 'node_modules' in file_path.parts:
+                # Skip node_modules folders and other common exclusions
+                if any(exclude in file_path.parts for exclude in ['node_modules', '.git', '__pycache__', '.pytest_cache']):
                     continue
                     
                 if file_path.is_file():
-                    # Check if file matches our target extensions or is a Dockerfile
+                    # Check if file matches our target extensions
                     file_suffix = file_path.suffix.lower()
-                    is_dockerfile = file_path.name == 'Dockerfile'
+                    file_name = file_path.name
                     
-                    if file_suffix in target_extensions or is_dockerfile:
+                    # Check if file matches any target extension or filename
+                    matches = False
+                    file_type = "Unknown"
+                    
+                    for ext in target_extensions:
+                        if ext.startswith('.'):
+                            # Extension match
+                            if file_suffix == ext.lower():
+                                matches = True
+                                file_type = ext
+                                break
+                        else:
+                            # Filename match (e.g., Dockerfile)
+                            if file_name == ext:
+                                matches = True
+                                file_type = ext
+                                break
+                    
+                    if matches:
                         relative_path = file_path.relative_to(source_path)
                         size_kb = file_path.stat().st_size / 1024
                         
@@ -183,7 +336,8 @@ class FileExtractorApp:
                             'source': str(file_path),
                             'relative': str(relative_path),
                             'name': file_path.name,
-                            'size': size_kb
+                            'size': size_kb,
+                            'type': file_type
                         })
             
             # Update UI in main thread
@@ -199,7 +353,8 @@ class FileExtractorApp:
             self.tree.insert('', 'end', values=(
                 file_info['name'],
                 file_info['relative'],
-                f"{file_info['size']:.1f}"
+                f"{file_info['size']:.1f}",
+                file_info['type']
             ))
             
     def _finish_scan(self):
@@ -395,7 +550,8 @@ class FileExtractorApp:
             dir_structure[parent_dir].append({
                 'name': file_info['name'],
                 'size': file_info['size'],
-                'full_path': file_info['relative']
+                'full_path': file_info['relative'],
+                'type': file_info['type']
             })
         
         # Sort directories and create report
@@ -409,7 +565,8 @@ class FileExtractorApp:
             files_in_dir = sorted(dir_structure[directory], key=lambda x: x['name'])
             for file_info in files_in_dir:
                 size_str = f"{file_info['size']:.1f} KB"
-                report_lines.append(f"   📄 {file_info['name']} ({size_str})")
+                type_str = f" ({file_info['type']})"
+                report_lines.append(f"   📄 {file_info['name']} ({size_str}){type_str}")
             
             report_lines.append("")
         
@@ -418,21 +575,15 @@ class FileExtractorApp:
         report_lines.append("SUMMARY")
         report_lines.append("-" * 80)
         
-        py_count = sum(1 for f in self.found_files if f['name'].endswith('.py'))
-        env_count = sum(1 for f in self.found_files if f['name'].endswith('.env'))
-        yml_count = sum(1 for f in self.found_files if f['name'].endswith(('.yml', '.yaml')))
-        json_count = sum(1 for f in self.found_files if f['name'].endswith('.json'))
-        tsx_count = sum(1 for f in self.found_files if f['name'].endswith('.tsx'))
-        ts_count = sum(1 for f in self.found_files if f['name'].endswith('.ts'))
-        dockerfile_count = sum(1 for f in self.found_files if f['name'] == 'Dockerfile')
+        # Count files by type
+        type_counts = {}
+        for file_info in self.found_files:
+            file_type = file_info['type']
+            type_counts[file_type] = type_counts.get(file_type, 0) + 1
         
-        report_lines.append(f"Python files (.py): {py_count}")
-        report_lines.append(f"Environment files (.env): {env_count}")
-        report_lines.append(f"YAML files (.yml/.yaml): {yml_count}")
-        report_lines.append(f"JSON files (.json): {json_count}")
-        report_lines.append(f"TypeScript React (.tsx): {tsx_count}")
-        report_lines.append(f"TypeScript files (.ts): {ts_count}")
-        report_lines.append(f"Dockerfile: {dockerfile_count}")
+        for file_type, count in sorted(type_counts.items()):
+            report_lines.append(f"{file_type}: {count}")
+        
         report_lines.append(f"Total files: {len(self.found_files)}")
         report_lines.append("")
         report_lines.append("File locations preserved in relative paths above.")
